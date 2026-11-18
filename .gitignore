@@ -1,0 +1,31 @@
+
+# Original and processed datasets
+data/raw/
+data/processed/
+
+# Python environment
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Secrets
+.env
+.env.*
+!.env.example
+kaggle.json
+
+# Logs
+logs/
+*.log
+
+# Power BI files containing source data
+*.pbix
+*.pbit
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
