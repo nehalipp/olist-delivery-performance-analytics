@@ -47,6 +47,7 @@ The project covers the following business areas:
 | Tableau | Data visualization and analytical reporting |
 | Git and GitHub | Version control and project documentation |
 
+
 ## Data Architecture
 
 The project follows a layered analytical architecture.
@@ -73,6 +74,8 @@ Analytical Views
 ```
 
 The architecture separates source ingestion, transformation, dimensional modeling, and reporting to support consistent metrics and reliable analytical outputs.
+
+
 
 ## Repository Structure
 
@@ -107,6 +110,7 @@ olist-delivery-performance-analytics/
 |-- requirements.txt
 |-- .gitignore
 ```
+
 
 ## Project Documentation
 
