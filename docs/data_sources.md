@@ -48,13 +48,17 @@ The dataset represents Brazilian e-commerce activity from 2016 through 2018.
 
 Date coverage for specific analyses should be determined from the relevant source timestamp field rather than assumed from the dataset publication date.
 
-## 5. Import Approach
+## 5. Import and Transformation Approach
 
 All nine source datasets were imported into PostgreSQL schema `staging`.
 
 The staging columns were defined as `TEXT` to preserve the original source representations during ingestion.
 
-Data-type conversion, standardization, and quality validation are intended to occur in the transformation layer.
+Eight table-specific SQL transformation scripts have been implemented and validated in the `transform` schema. These scripts standardize text fields, convert data types, derive analytical attributes, and create data-quality flags.
+
+The product category translation table remains available as a source lookup and will be incorporated during product dimension development.
+
+Source row counts and transformation validation findings are documented in [Data Quality Assessment](data_quality_report.md).
 
 ## 6. Known Source Limitations
 

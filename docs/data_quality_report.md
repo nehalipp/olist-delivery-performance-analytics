@@ -1,105 +1,90 @@
-
 # Data Quality Assessment
 
 ## 1. Purpose
 
-This document records the source-data profiling and validation performed before transformation.
+This document records the source-data profiling, transformation, and validation performed for the Olist Brazilian E-Commerce Public Dataset.
 
-The assessment covers data completeness, uniqueness, referential integrity, numeric validity, timestamp consistency, and potential duplicate patterns.
+The assessment covers:
 
-The original source data and imported staging tables are preserved. Data-quality handling will be implemented in the transformation layer.
+- Source record counts and table grain
+- Missing values and invalid attributes
+- Key uniqueness and referential integrity
+- Timestamp consistency and delivery performance
+- Numeric and financial field validation
+- Payment and review record patterns
+- Geolocation duplication and coordinate anomalies
 
-## 2. Import and Row-Count Validation
+The project uses a layered PostgreSQL architecture:
 
-All nine source datasets were successfully imported into PostgreSQL staging tables.
+`staging → transform → warehouse → analytics`
 
-Actual row counts matched the expected source counts.
+The original source data is preserved in the staging schema. Standardization, type conversion, derived attributes, and data-quality flags are implemented in the transform schema.
 
-| Dataset | Records |
+## 2. Source Import Validation
+
+All nine source CSV files were imported into PostgreSQL staging tables.
+
+The imported row counts matched the expected source record counts.
+
+| Source Table | Imported Records |
 |---|---:|
-| Customers | 99,441 |
-| Geolocation | 1,000,163 |
-| Order Items | 112,650 |
-| Order Payments | 103,886 |
-| Order Reviews | 99,224 |
-| Orders | 99,441 |
-| Product Category Translation | 71 |
-| Products | 32,951 |
-| Sellers | 3,095 |
+| customers_raw | 99,441 |
+| geolocation_raw | 1,000,163 |
+| order_items_raw | 112,650 |
+| order_payments_raw | 103,886 |
+| order_reviews_raw | 99,224 |
+| orders_raw | 99,441 |
+| product_category_translation_raw | 71 |
+| products_raw | 32,951 |
+| sellers_raw | 3,095 |
 | **Total** | **1,650,922** |
 
-## 3. Key and Relationship Validation
+These counts represent imported source records, not unique customers, orders, products, or geographic locations.
 
-The following validation checks returned no violations:
+All staging columns were defined as `TEXT` to preserve source representations during ingestion.
 
-| Validation | Result |
-|---|---:|
-| Duplicate order IDs | 0 |
-| Duplicate customer IDs | 0 |
-| Duplicate product IDs | 0 |
-| Duplicate seller IDs | 0 |
-| Duplicate order-item composite keys | 0 |
-| Missing tested primary-key candidate values | 0 |
-| Order items referencing unknown orders | 0 |
-| Order items referencing unknown products | 0 |
-| Order items referencing unknown sellers | 0 |
-| Orders referencing unknown customers | 0 |
-| Payments referencing unknown orders | 0 |
-| Reviews referencing unknown orders | 0 |
-| Duplicate category translation keys | 0 |
+## 3. Source Keys and Relationship Validation
 
-These findings apply to the validation checks performed.
+The source profiling and transformation checks established the following key characteristics.
+
+| Dataset | Record Grain / Key | Validation Result |
+|---|---|---|
+| Orders | One row per `order_id` | 99,441 rows; no duplicate order IDs |
+| Customers | One row per `customer_id` | 99,441 rows; no duplicate customer IDs |
+| Products | One row per `product_id` | 32,951 rows; no duplicate product IDs |
+| Sellers | One row per `seller_id` | 3,095 rows; no duplicate seller IDs |
+| Order Items | (`order_id`, `order_item_id`) | 112,650 rows; no duplicate composite keys |
+| Payments | (`order_id`, `payment_sequential`) | 103,886 rows; no duplicate composite keys |
+| Reviews | Source review record | 99,224 rows; `review_id` is not unique |
+| Geolocation | Source geographic record | ZIP prefixes are not unique |
+| Category Translation | One row per Portuguese category | 71 rows |
 
 ### Identifier Considerations
 
 - `customer_id` identifies the customer record associated with an order.
-- `customer_unique_id` identifies a customer across potentially multiple customer records and orders.
-- `customer_unique_id` should not be assumed unique in the customer source table.
-- Geolocation ZIP prefixes are not unique.
-- `review_id` is not unique across all review records.
+- `customer_unique_id` identifies the underlying customer across potentially multiple customer records and orders.
+- The customer source contains 96,096 distinct `customer_unique_id` values across 99,441 customer records.
+- The 3,345 additional customer records reflect multiple customer records associated with the same underlying customer identifier.
+- `review_id` repeats across different orders and must not be treated as a unique key.
+- Geolocation ZIP prefixes are not unique and must not be used as standalone geographic primary keys.
 
-## 4. Missing-Value Assessment
+### Referential Integrity
 
-### 4.1 Order Timestamps
+The following checks returned no unmatched records:
 
-| Field | Missing Records |
-|---|---:|
-| `order_approved_at` | 160 |
-| `order_delivered_carrier_date` | 1,783 |
-| `order_delivered_customer_date` | 2,965 |
+- Order items referencing unknown orders
+- Order items referencing unknown products
+- Order items referencing unknown sellers
+- Payments referencing unknown orders
+- Reviews referencing unknown orders
 
-Missing timestamps were investigated by order status.
+No unmatched customer references were identified in the order/customer relationship checks.
 
-Missing delivery timestamps on orders that were not delivered are generally consistent with incomplete or non-delivered order lifecycles.
+## 4. Orders Data Quality
 
-However, delivered orders with missing lifecycle timestamps are exceptions.
+### 4.1 Order Status Distribution
 
-Among delivered orders:
-
-- 14 orders have missing approval timestamps.
-- 2 orders have missing carrier timestamps.
-- 8 orders have missing customer-delivery timestamps.
-
-One order is missing both carrier and customer-delivery timestamps. Therefore, 23 distinct delivered orders have at least one of these missing timestamps.
-
-### 4.2 Product Attributes
-
-| Field | Missing Records |
-|---|---:|
-| Product category | 610 |
-| Product photo count | 610 |
-| Product weight | 2 |
-
-The 610 products missing product categories are the exact same products missing photo counts.
-
-There are no category-only or photo-count-only missing records in this check.
-
-Six products have missing or nonpositive weight values:
-
-- Two products have missing weights.
-- Four products have zero weights.
-
-## 5. Order Status Distribution
+The source contains 99,441 orders across eight order statuses.
 
 | Order Status | Orders | Percentage |
 |---|---:|---:|
@@ -111,16 +96,43 @@ Six products have missing or nonpositive weight values:
 | Processing | 301 | 0.30% |
 | Created | 5 | 0.01% |
 | Approved | 2 | 0.00% |
+| **Total** | **99,441** | **100.00%** |
 
 Percentages are rounded.
 
-## 6. Timestamp Consistency
+### 4.2 Missing Order Timestamps
 
-### 6.1 Carrier Timestamp Before Purchase
+| Source Field | Missing Records |
+|---|---:|
+| `order_approved_at` | 160 |
+| `order_delivered_carrier_date` | 1,783 |
+| `order_delivered_customer_date` | 2,965 |
 
-A total of 166 orders have a carrier timestamp earlier than the purchase timestamp.
+Missing timestamps were investigated by order status.
 
-| Time Difference | Affected Orders |
+Among delivered orders:
+
+- 14 orders have missing approval timestamps.
+- 2 orders have missing carrier timestamps.
+- 8 orders have missing customer-delivery timestamps.
+- One order overlaps the missing carrier and customer-delivery groups.
+
+Therefore, 23 distinct delivered orders have at least one missing lifecycle timestamp.
+
+Missing lifecycle timestamps on non-delivered orders are generally consistent with incomplete or non-delivered order processes. They should not automatically be classified as invalid records.
+
+### 4.3 Timestamp Sequence Validation
+
+| Validation | Affected Orders |
+|---|---:|
+| Approval before purchase | 0 |
+| Carrier timestamp before purchase | 166 |
+| Customer delivery before carrier timestamp | 23 |
+| Customer delivery before purchase | 0 |
+
+The 166 carrier-before-purchase cases were investigated:
+
+| Time Difference | Orders |
 |---|---:|
 | Within 1 hour | 121 |
 | 1 to 24 hours | 43 |
@@ -128,100 +140,390 @@ A total of 166 orders have a carrier timestamp earlier than the purchase timesta
 | More than 7 days | 1 |
 | **Total** | **166** |
 
-The discrepancies include both small and substantial time differences.
+For the 23 orders with customer delivery before carrier timestamps:
 
-They should not all be assumed to be timezone or rounding issues.
-
-### 6.2 Customer Delivery Before Carrier
-
-A total of 23 orders have customer-delivery timestamps earlier than their carrier timestamps.
-
-| Measure | Hours |
+| Measure | Result |
 |---|---:|
-| Average difference | 78.46 |
-| Minimum difference | 0.39 |
-| Maximum difference | 386.31 |
+| Average sequence difference | 78.46 hours |
+| Minimum sequence difference | 0.39 hours |
+| Maximum sequence difference | 386.31 hours |
 
-These records have an invalid chronological sequence for carrier-to-customer delivery duration calculations.
+These timestamp sequences are flagged in `transform.orders_clean`.
 
-### 6.3 Late Deliveries
+Original timestamp values are preserved. Duration calculations must exclude invalid or incomplete timestamp sequences.
 
-A total of 7,827 delivered orders have a customer-delivery timestamp later than the estimated delivery date.
+### 4.4 Late Delivery Validation
 
-These are valid late-delivery business outcomes, not invalid records.
+A raw timestamp comparison initially identified 7,827 records where customer delivery occurred after the estimated delivery date.
 
-They should remain available for delivery-performance analysis.
+One of those records belonged to a canceled order.
 
-## 7. Numeric and Product Attribute Validation
+The validated delivered-order result is:
 
-The completed checks found:
-
-- No missing or nonpositive order-item prices.
-- No missing or negative freight values.
-- No missing or negative payment values.
-- No missing or invalid review scores.
-- Four products with zero weight.
-- Two products with missing weight.
-- No nonpositive product lengths.
-- No nonpositive product heights.
-- No nonpositive product widths.
-- No negative product photo counts.
-
-The freight check tested negative values; zero freight was not classified as negative.
-
-## 8. Review Record Investigation
-
-The review investigation identified:
-
-| Check | Result |
+| Measure | Orders |
 |---|---:|
+| Delivered orders with delivery after estimated date | 7,826 |
+
+Late delivery is a valid business outcome, not a data-quality error.
+
+The `is_late_delivery` flag in `transform.orders_clean` identifies delivered orders with both required timestamps and an actual delivery timestamp later than the estimated date.
+
+The late-delivery KPI should use delivered orders with valid actual and estimated delivery timestamps as its denominator.
+
+## 5. Customer Data Quality
+
+The customer transformation produced:
+
+| Validation | Result |
+|---|---:|
+| Total customer records | 99,441 |
+| Distinct `customer_id` values | 99,441 |
+| Duplicate customer records | 0 |
+| Distinct `customer_unique_id` values | 96,096 |
+| Additional customer records | 3,345 |
+| Missing required customer fields | 0 |
+
+Customer city and state values were standardized to uppercase, and text fields were trimmed.
+
+ZIP prefixes were retained as text.
+
+The distinction between `customer_id` and `customer_unique_id` must be maintained in customer-level analysis:
+
+- Use `customer_id` to identify the customer record associated with an order.
+- Use `customer_unique_id` to identify repeat customers across orders.
+
+## 6. Product Data Quality
+
+The product transformation produced 32,951 records with no duplicate product IDs.
+
+### 6.1 Missing Attributes
+
+| Product Attribute | Missing Records |
+|---|---:|
+| Product category | 610 |
+| Product photo count | 610 |
+| Product name length | 610 |
+| Product description length | 610 |
+| Product weight | 2 |
+
+The same 610 products are missing category, photo count, name length, and description length.
+
+These are not four separate groups of missing products.
+
+### 6.2 Weight and Dimension Validation
+
+| Validation | Result |
+|---|---:|
+| Missing product weights | 2 |
+| Zero product weights | 4 |
+| Nonpositive product lengths | 0 |
+| Nonpositive product heights | 0 |
+| Nonpositive product widths | 0 |
+| Negative photo counts | 0 |
+| Negative weights | 0 |
+
+The source column names `product_name_lenght` and `product_description_lenght` were standardized to `product_name_length` and `product_description_length`.
+
+### Treatment
+
+- Missing product attributes remain `NULL`.
+- Zero weight remains zero and is identified using a quality flag.
+- Missing product categories should be represented as `Unknown` in reporting while preserving the original source value.
+- Product dimensions are retained without unnecessary modification.
+
+## 7. Seller Data Quality
+
+The seller transformation produced:
+
+| Validation | Result |
+|---|---:|
+| Total seller records | 3,095 |
+| Distinct seller IDs | 3,095 |
+| Duplicate seller records | 0 |
+| Missing required fields | 0 |
+| Distinct seller states | 23 |
+
+Seller city and state values were standardized to uppercase, and text fields were trimmed.
+
+ZIP prefixes were retained as text.
+
+## 8. Order Item Data Quality
+
+The order-item transformation produced 112,650 records.
+
+The composite key is (`order_id`, `order_item_id`).
+
+| Validation | Result |
+|---|---:|
+| Total order-item records | 112,650 |
+| Distinct orders with items | 98,666 |
+| Distinct composite keys | 112,650 |
+| Duplicate composite keys | 0 |
+| Missing required identifiers or dates | 0 |
+| Nonpositive item prices | 0 |
+| Negative freight values | 0 |
+| Zero freight values | 383 |
+| Unmatched order references | 0 |
+| Unmatched product references | 0 |
+| Unmatched seller references | 0 |
+
+Zero freight values are retained and are not classified as negative freight.
+
+### 8.1 Financial Baseline
+
+| Measure | Amount |
+|---|---:|
+| Total item price | 13,591,643.70 |
+| Total freight value | 2,251,909.54 |
+| Average item price | 120.65 |
+| Average freight per item | 19.99 |
+
+These amounts represent sums across source order-item records. Total item price should not automatically be described as recognized revenue or equated with total payment value.
+
+### 8.2 Orders Without Item Records
+
+There are 775 orders in `transform.orders_clean` without corresponding order-item records.
+
+Their status distribution is:
+
+| Order Status | Orders Without Items |
+|---|---:|
+| Unavailable | 603 |
+| Canceled | 164 |
+| Created | 5 |
+| Invoiced | 2 |
+| Shipped | 1 |
+| **Total** | **775** |
+
+No order-item records should be invented for these orders.
+
+These orders remain part of the order-level dataset, while `fact_order_items` should contain only actual source order items.
+
+## 9. Payment Data Quality
+
+The payment transformation produced 103,886 records.
+
+The payment record grain is one row per order payment sequence, identified by (`order_id`, `payment_sequential`).
+
+| Validation | Result |
+|---|---:|
+| Total payment records | 103,886 |
+| Distinct orders with payments | 99,440 |
+| Distinct payment composite keys | 103,886 |
+| Duplicate payment composite keys | 0 |
+| Missing payment fields | 0 |
+| Invalid payment sequence values | 0 |
+| Invalid installment values | 2 |
+| Negative payment values | 0 |
+| Zero payment values | 9 |
+| Total payment value | 16,008,872.12 |
+| Average payment record value | 154.10 |
+
+### 9.1 Payment Patterns
+
+- 2,961 orders have multiple payment records.
+- The maximum number of payment records for one order is 29.
+- Zero payment values are retained.
+- `not_defined` payment types are retained.
+- Two credit-card records have zero installments and are flagged as invalid installment records.
+
+The two records with invalid installments have payment values of 129.94 and 58.69.
+
+### 9.2 Orders Without Payment Records
+
+One delivered order has no associated payment record:
+
+`bfbd0f9bdef84302105ad712db648a6c`
+
+| Attribute | Result |
+|---|---:|
+| Order status | Delivered |
+| Order items | 3 |
+| Total item price | 134.97 |
+| Total freight | 8.49 |
+| Payment records | 0 |
+
+The order and its item records are preserved. No synthetic payment record is created.
+
+### Treatment
+
+- Preserve all payment records.
+- Retain zero-value payment records.
+- Flag invalid installment values.
+- Retain `not_defined` payment types.
+- Aggregate payment records to order grain before joining them to `fact_orders`.
+- Do not join raw payment records directly to raw order-item records when calculating financial measures.
+
+## 10. Review Data Quality
+
+The review transformation produced 99,224 records.
+
+| Validation | Result |
+|---|---:|
+| Total review records | 99,224 |
+| Distinct review IDs | 98,410 |
+| Distinct orders with reviews | 98,673 |
 | Repeated review ID groups | 789 |
-| Excess rows beyond the first row in repeated groups | 814 |
+| Excess rows associated with repeated review IDs | 814 |
+| Duplicate (`review_id`, `order_id`) combinations | 0 |
 | Orders with multiple reviews | 547 |
+| Maximum reviews per order | 3 |
 | Exact duplicate review rows | 0 |
+| Missing required fields | 0 |
+| Invalid review scores | 0 |
+| Invalid review timestamp sequences | 0 |
+| Unmatched order references | 0 |
 
-Additional findings:
+### 10.1 Review Score Distribution
 
-- Repeated review IDs occur across different orders.
-- All occurrences within repeated ID groups have the same review score.
-- No exact duplicate review rows were found.
+| Review Score | Review Records | Percentage |
+|---|---:|---:|
+| 1 | 11,424 | 11.51% |
+| 2 | 3,151 | 3.18% |
+| 3 | 8,179 | 8.24% |
+| 4 | 19,142 | 19.29% |
+| 5 | 57,328 | 57.78% |
+| **Total** | **99,224** | **100.00%** |
 
-### Decision
+### Treatment
 
-Do not deduplicate review records using `review_id` alone.
+- Preserve all review records.
+- Do not impose a unique constraint on `review_id`.
+- Do not deduplicate using `review_id` alone.
+- The combination (`review_id`, `order_id`) was validated as unique in the source review records.
+- Aggregate review metrics to order grain before joining them to `fact_orders`.
 
-Do not impose a unique constraint on `review_id`.
+Average review score and review count should be calculated using an explicit order-level aggregation rule.
 
-Preserve the source review records and define the appropriate review grain and aggregation logic before combining reviews with order-level data.
+## 11. Geolocation Data Quality
 
-## 9. Planned Data Quality Treatment
+The geolocation transformation produced 1,000,163 records.
 
-| Issue | Planned Treatment |
-|---|---|
-| Missing source timestamps | Preserve NULL |
-| Missing timestamps on non-delivered orders | Preserve NULL; interpret with order status |
-| Missing timestamps on delivered orders | Preserve NULL and add quality flags |
-| Carrier timestamp before purchase | Preserve source values and flag invalid sequence |
-| Customer delivery before carrier | Preserve source values and flag invalid sequence |
-| Late delivery | Retain as a valid business outcome |
-| Missing product category | Map to `Unknown` in reporting while retaining the source value |
-| Missing product photo count | Preserve NULL |
-| Missing or zero product weight | Preserve raw value; set analytical weight to NULL and flag |
-| Repeated review IDs | Retain records; do not deduplicate on review ID alone |
+| Validation | Result |
+|---|---:|
+| Total records | 1,000,163 |
+| Distinct ZIP prefixes | 19,015 |
+| Distinct cities | 8,010 |
+| Distinct states | 27 |
+| Missing ZIP prefixes | 0 |
+| Missing coordinates | 0 |
+| Missing cities or states | 0 |
+| Invalid numeric coordinate formats | 0 |
+| Coordinates outside standard latitude/longitude limits | 0 |
 
-Duration calculations should use valid timestamp sequences. Invalid or incomplete sequences should not be silently included in delivery-duration averages.
+### 11.1 Duplicate Records
 
-## 10. Limitations
+| Validation | Result |
+|---|---:|
+| Exact duplicate groups | 128,178 |
+| Excess rows in exact duplicate groups | 261,836 |
+| ZIP prefixes with multiple records | 17,972 |
+| Maximum records for one ZIP prefix | 1,146 |
 
-- Timestamp inconsistencies can affect delivery-duration metrics.
-- Late-delivery calculations must define their denominator clearly.
-- ZIP-code prefixes cannot be treated as unique geographic identifiers.
-- Review IDs cannot be treated as unique keys.
-- The source data is historical.
-- Relationships between review scores and delivery performance are descriptive and do not establish causation.
+The geolocation source contains substantial repetition and multiple coordinate records per ZIP prefix.
 
-## 11. Assessment Status
+These are source characteristics that must be considered when designing the location lookup.
 
-Source-data import, row-count reconciliation, key and relationship validation, and the profiling checks documented above are complete.
+### 11.2 Geographic Coordinate Screening
 
-The proposed data-quality treatments have not yet all been implemented. They will be applied and validated during the SQL transformation phase.
+A broad geographic screening range was used to identify records outside approximate Brazilian geographic bounds:
+
+- Latitude: -34 to 6
+- Longitude: -74 to -32
+
+The revised longitude range accommodates locations such as Fernando de Noronha.
+
+| Validation | Records |
+|---|---:|
+| Outside approximate latitude bounds | 31 |
+| Outside approximate longitude bounds | 26 |
+| Outside either coordinate bound | 31 |
+
+These 31 records are geographically suspicious and should be flagged for geographic reporting.
+
+The screening range is a broad rectangular approximation, not an exact Brazilian national boundary. Records outside the range should not automatically be deleted.
+
+### 11.3 ZIP Prefixes Associated with Multiple States
+
+Eight ZIP prefixes were identified with records assigned to more than one state.
+
+Examples include:
+
+- `02116`: São Paulo, SP and São Paulo, RN
+- `04011`: São Paulo, SP and São Paulo, AC
+- `21550`: Rio de Janeiro, RJ and Rio de Janeiro, AC
+- `23056`: Rio de Janeiro, RJ and Rio de Janeiro, AC
+- `72915`: Goiás and Distrito Federal assignments
+- `78557`: Mato Grosso and Rondônia assignments
+- `79750`: Mato Grosso do Sul and Rio Grande do Sul assignments
+- `80630`: Paraná and Santa Catarina assignments
+
+Some conflicts involve isolated records against a much larger group with consistent geographic assignments.
+
+These records should be investigated rather than automatically resolved using the most frequent state.
+
+### Treatment
+
+- Preserve all source records in `transform.geolocation_clean`.
+- Do not deduplicate the cleaned source table.
+- Do not treat ZIP prefix as a unique geographic key.
+- Flag geographically suspicious coordinates.
+- Investigate ZIP prefixes associated with multiple states.
+- Create a separate geographic lookup during warehouse modeling using a documented aggregation or representative-location rule.
+
+## 12. Transformation Summary
+
+All eight table-specific transformation scripts have been executed and validated.
+
+| Transformation Script | Target Table | Source Records | Status |
+|---|---|---:|---|
+| 01_transform_orders.sql | `transform.orders_clean` | 99,441 | Validated |
+| 02_transform_customers.sql | `transform.customers_clean` | 99,441 | Validated |
+| 03_transform_products.sql | `transform.products_clean` | 32,951 | Validated |
+| 04_transform_sellers.sql | `transform.sellers_clean` | 3,095 | Validated |
+| 05_transform_order_items.sql | `transform.order_items_clean` | 112,650 | Validated |
+| 06_transform_payments.sql | `transform.payments_clean` | 103,886 | Validated |
+| 07_transform_reviews.sql | `transform.reviews_clean` | 99,224 | Validated |
+| 08_transform_geolocation.sql | `transform.geolocation_clean` | 1,000,163 | Validated |
+
+The product category translation source contains 71 records and will be incorporated during product dimension development.
+
+## 13. Cross-Table Modeling Considerations
+
+The following rules must be maintained during warehouse implementation:
+
+1. `fact_orders` must contain one row per order.
+2. `fact_order_items` must contain one row per order item.
+3. Payment records must be aggregated to order grain before joining to an order-level fact.
+4. Review records must be aggregated to order grain using a documented rule.
+5. Raw order-item records must not be joined directly to raw payment or review records without controlling for fan-out.
+6. Orders without order items must remain represented in the order-level fact.
+7. Orders without payment records must remain represented, with missing payment information identified.
+8. Customer-level repeat-order analysis must use `customer_unique_id`.
+9. Geolocation ZIP prefixes must not be treated as unique keys.
+10. Delivery-duration calculations must use valid and complete timestamp sequences.
+
+## 14. Known Limitations
+
+- The dataset represents historical Brazilian marketplace activity from 2016 through 2018.
+- Some order lifecycle timestamps are missing or have inconsistent chronological sequences.
+- Some products have incomplete descriptive attributes.
+- Payment records do not exist for one delivered order.
+- Review IDs repeat across different orders.
+- Geolocation contains substantial duplicate records and some geographic inconsistencies.
+- ZIP-prefix geography is not sufficiently reliable to serve as a unique location key.
+- Item sales value and payment value are different measures and should not be treated as interchangeable.
+- Review-score and delivery-performance comparisons are descriptive and do not establish causation.
+- The source data does not contain all information required to calculate complete marketplace profitability.
+
+## 15. Assessment Status
+
+**Source import and transformation validation are complete.**
+
+The staging and transformation layers have been created and validated against the source data.
+
+Known data-quality exceptions have been retained, flagged, or documented rather than silently removed.
+
+The next phase is dimensional warehouse implementation. Final aggregation rules, dimension keys, fact-table relationships, and reporting treatments will be validated during warehouse development.
+
+This document will be extended with warehouse-level and analytics-level validation results after those layers are implemented.
