@@ -55,7 +55,7 @@ The source profiling and transformation checks established the following key cha
 | Sellers | One row per `seller_id` | 3,095 rows; no duplicate seller IDs |
 | Order Items | (`order_id`, `order_item_id`) | 112,650 rows; no duplicate composite keys |
 | Payments | (`order_id`, `payment_sequential`) | 103,886 rows; no duplicate composite keys |
-| Reviews | Source review record | 99,224 rows; `review_id` is not unique |
+| Reviews | (`review_id`, `order_id`) | 99,224 rows; composite keys unique; `review_id` alone is not unique |
 | Geolocation | Source geographic record | ZIP prefixes are not unique |
 | Category Translation | One row per Portuguese category | 71 rows |
 
@@ -228,8 +228,34 @@ The source column names `product_name_lenght` and `product_description_lenght` w
 
 - Missing product attributes remain `NULL`.
 - Zero weight remains zero and is identified using a quality flag.
-- Missing product categories should be represented as `Unknown` in reporting while preserving the original source value.
+- Missing product categories retain their original NULL source values and are classified as `Unknown` in the English reporting category.
 - Product dimensions are retained without unnecessary modification.
+
+### 6.3 Product Category Translation Validation
+
+The product dimension uses the source category translation table containing 71 Portuguese-to-English mappings.
+
+Initial validation identified 13 products across two categories without translation matches.
+
+The following mappings were added during product dimension loading:
+
+| Portuguese Category | English Category | Products |
+|---|---|---:|
+| `portateis_cozinha_e_preparadores_de_alimentos` | Portable Kitchen and Food Preparers | 10 |
+| `pc_gamer` | Gaming PC | 3 |
+
+Final category classification:
+
+| Category Status | Products |
+|---|---:|
+| Missing source category | 610 |
+| Translation available | 32,341 |
+| No translation match | 0 |
+| **Total** | **32,951** |
+
+The product dimension retains the original Portuguese category and includes the translated English category and a `category_status` quality classification.
+
+All 32,951 product records were retained. No product records were removed during category translation handling.
 
 ## 7. Seller Data Quality
 
@@ -298,6 +324,32 @@ Their status distribution is:
 No order-item records should be invented for these orders.
 
 These orders remain part of the order-level dataset, while `fact_order_items` should contain only actual source order items.
+
+### 8.3 Shipping Limit Timestamp Anomalies
+
+Shipping-limit timestamp profiling identified four anomalous order-item records across three distinct orders.
+
+| Shipping Limit Year | Order Items |
+|---|---:|
+| 2016 | 370 |
+| 2017 | 49,765 |
+| 2018 | 62,511 |
+| 2020 | 4 |
+
+The four records with 2020 shipping-limit dates have purchase timestamps from 2017.
+
+The affected records span February 3, 2020 through April 9, 2020.
+
+The affected orders include delivered, canceled, and shipped statuses. One delivered order contains two affected order items.
+
+These records represent anomalous source timestamps and are not automatically corrected or removed.
+
+**Treatment**
+
+- Preserve the original shipping-limit timestamps.
+- Retain all four order-item records.
+- Flag the anomalous records for data-quality monitoring.
+- Do not use the anomalous shipping-limit timestamps in delivery-performance calculations unless their validity has been independently established.
 
 ## 9. Payment Data Quality
 
@@ -486,7 +538,7 @@ All eight table-specific transformation scripts have been executed and validated
 | 07_transform_reviews.sql | `transform.reviews_clean` | 99,224 | Validated |
 | 08_transform_geolocation.sql | `transform.geolocation_clean` | 1,000,163 | Validated |
 
-The product category translation source contains 71 records and will be incorporated during product dimension development.
+The product category translation source contains 71 records and was incorporated during product dimension development. Two additional category mappings were added to resolve the 13 initially unmatched product records.
 
 ## 13. Cross-Table Modeling Considerations
 
@@ -505,7 +557,7 @@ The following rules must be maintained during warehouse implementation:
 
 ## 14. Known Limitations
 
-- The dataset represents historical Brazilian marketplace activity from 2016 through 2018.
+- The source order activity primarily spans 2016 through 2018. Four anomalous shipping-limit timestamps extend into 2020 and are documented separately.
 - Some order lifecycle timestamps are missing or have inconsistent chronological sequences.
 - Some products have incomplete descriptive attributes.
 - Payment records do not exist for one delivered order.
@@ -518,12 +570,65 @@ The following rules must be maintained during warehouse implementation:
 
 ## 15. Assessment Status
 
-**Source import and transformation validation are complete.**
+**Source import, transformation validation, and initial dimension validation are complete.**
 
 The staging and transformation layers have been created and validated against the source data.
 
+The initial dimensional warehouse contains validated customer, product, seller, and date dimensions.
+
 Known data-quality exceptions have been retained, flagged, or documented rather than silently removed.
 
-The next phase is dimensional warehouse implementation. Final aggregation rules, dimension keys, fact-table relationships, and reporting treatments will be validated during warehouse development.
+The following warehouse activities remain pending:
 
-This document will be extended with warehouse-level and analytics-level validation results after those layers are implemented.
+- `fact_orders` implementation and validation.
+- `fact_order_items` implementation and validation.
+- Payment and review aggregation validation.
+- Warehouse referential integrity and financial reconciliation.
+- Analytical reporting view development.
+
+The next phase is fact-table implementation, beginning with `fact_orders`.
+
+This document will be extended with fact-table, warehouse-level, and analytics-level validation results after those layers are implemented.
+
+## 16. Warehouse Dimension Validation
+
+The initial dimensional warehouse tables have been created and validated.
+
+### 16.1 Dimension Row Counts and Business-Key Uniqueness
+
+| Dimension | Total Rows | Distinct Business Keys | Duplicate Keys |
+|---|---:|---:|---:|
+| dim_customer | 99,441 | 99,441 | 0 |
+| dim_product | 32,951 | 32,951 | 0 |
+| dim_seller | 3,095 | 3,095 | 0 |
+
+All three dimensions passed row-count and business-key uniqueness validation.
+
+### 16.2 Date Dimension Validation
+
+| Validation | Result |
+|---|---|
+| First calendar date | 2016-09-04 |
+| Last calendar date | 2020-04-09 |
+| Total calendar records | 1,314 |
+| Missing calendar dates | 0 |
+
+The date dimension provides continuous calendar coverage across the validated date range.
+
+### 16.3 Product Dimension Validation
+
+The product dimension contains 32,951 unique product records.
+
+Category translation validation confirmed:
+
+- 32,341 products with available English translations.
+- 610 products with missing source categories.
+- 0 products with unresolved translation matches.
+
+The original source category values are preserved, and missing categories are classified as `Unknown` for English reporting.
+
+### 16.4 Warehouse Validation Status
+
+The initial customer, product, seller, and date dimensions have passed their current validation checks.
+
+Fact-table implementation and subsequent warehouse reconciliation remain pending.

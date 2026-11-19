@@ -100,6 +100,26 @@ olist-delivery-performance-analytics/
 |   |-- 04_create_facts.sql
 |   |-- 05_analytical_views.sql
 |   |-- 06_validation_queries.sql
+|   |
+|   |-- transform/
+|   |   |-- 01_transform_orders.sql
+|   |   |-- 02_transform_customers.sql
+|   |   |-- 03_transform_products.sql
+|   |   |-- 04_transform_sellers.sql
+|   |   |-- 05_transform_order_items.sql
+|   |   |-- 06_transform_payments.sql
+|   |   |-- 07_transform_reviews.sql
+|   |   |-- 08_transform_geolocation.sql
+|   |
+|   |-- validation/
+|       |-- 01_validate_orders.sql
+|       |-- 02_validate_customers.sql
+|       |-- 03_validate_products.sql
+|       |-- 04_validate_sellers.sql
+|       |-- 05_validate_order_items.sql
+|       |-- 06_validate_payments.sql
+|       |-- 07_validate_reviews.sql
+|       |-- 08_validate_geolocation.sql
 |
 |-- src/
 |-- notebooks/

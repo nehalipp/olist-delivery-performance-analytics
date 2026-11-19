@@ -8,7 +8,7 @@
 
 -- Rebuild only this derived table when rerunning the script.
 
-DROP TABLE IF EXISTS p;
+DROP TABLE IF EXISTS transform.payments_clean;
 
 CREATE TABLE transform.payments_clean AS
 SELECT

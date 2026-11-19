@@ -138,11 +138,57 @@ WHERE is_delivery_before_carrier;
 
 
 -- 1.8 Late delivery count
--- Only delivered orders with valid actual and estimated timestamps
+-- Only delivered orders with valid purchase, actual delivery,
+-- and estimated delivery timestamps
+
 SELECT
     COUNT(*) AS late_delivered_orders
 FROM transform.orders_clean
 WHERE is_delivered = TRUE
+  AND purchase_timestamp IS NOT NULL
   AND delivered_timestamp IS NOT NULL
   AND estimated_delivery_timestamp IS NOT NULL
+  AND delivered_timestamp >= purchase_timestamp
   AND delivered_timestamp > estimated_delivery_timestamp;
+
+
+-- 1.9 Delivery duration metric validation
+
+SELECT
+    COUNT(*) AS total_orders,
+
+    COUNT(*) FILTER (
+        WHERE purchase_to_delivery_days IS NOT NULL
+    ) AS orders_with_delivery_duration,
+
+    COUNT(*) FILTER (
+        WHERE delivery_delay_days IS NOT NULL
+    ) AS orders_with_delivery_delay,
+
+    COUNT(*) FILTER (
+        WHERE is_late_delivery = TRUE
+    ) AS late_delivered_orders,
+
+    COUNT(*) FILTER (
+        WHERE is_late_delivery = FALSE
+    ) AS on_time_or_early_delivered_orders,
+
+    COUNT(*) FILTER (
+        WHERE order_status <> 'delivered'
+          AND (
+              purchase_to_delivery_days IS NOT NULL
+              OR delivery_delay_days IS NOT NULL
+              OR is_late_delivery IS NOT NULL
+          )
+    ) AS non_delivered_orders_with_delivery_metrics,
+
+    COUNT(*) FILTER (
+        WHERE is_delivery_before_purchase
+          AND (
+              purchase_to_delivery_days IS NOT NULL
+              OR delivery_delay_days IS NOT NULL
+              OR is_late_delivery IS NOT NULL
+          )
+    ) AS invalid_delivery_sequence_with_metrics
+
+FROM transform.orders_clean;

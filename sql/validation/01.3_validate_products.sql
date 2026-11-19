@@ -134,3 +134,38 @@ SELECT
 FROM transform.products_clean
 GROUP BY COALESCE(product_category_name, 'Unknown')
 ORDER BY product_count DESC;
+
+
+
+-- 3.8 Product category translation coverage
+
+SELECT
+    CASE
+        WHEN p.is_missing_category
+            THEN 'Missing source category'
+        WHEN t.product_category_name IS NULL
+            THEN 'No translation match'
+        ELSE 'Translation available'
+    END AS category_status,
+    COUNT(*) AS product_count
+FROM transform.products_clean p
+LEFT JOIN staging.product_category_translation_raw t
+    ON p.product_category_name =
+       NULLIF(BTRIM(t.product_category_name), '')
+GROUP BY 1
+ORDER BY 1;
+
+
+-- 3.9 Verify missing translation categories
+
+SELECT
+    p.product_category_name,
+    COUNT(*) AS product_count
+FROM transform.products_clean p
+LEFT JOIN staging.product_category_translation_raw t
+    ON p.product_category_name =
+       NULLIF(BTRIM(t.product_category_name), '')
+WHERE p.is_missing_category = FALSE
+  AND t.product_category_name IS NULL
+GROUP BY p.product_category_name
+ORDER BY product_count DESC;

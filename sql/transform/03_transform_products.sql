@@ -62,4 +62,4 @@ SELECT
             OR NULLIF(BTRIM(product_width_cm), '')::INTEGER <= 0
         ),
         FALSE
-    ) AS has_nonpositive_dimension
+    ) AS has_nonpositive_dimension;

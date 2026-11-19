@@ -101,9 +101,11 @@ SELECT
     -- Order classification
     (order_status = 'delivered') AS is_delivered,
 
+    
     -- Duration metrics
     CASE
         WHEN purchase_timestamp IS NOT NULL
+         AND approved_timestamp IS NOT NULL
          AND approved_timestamp >= purchase_timestamp
         THEN ROUND(
             (EXTRACT(EPOCH FROM
@@ -113,7 +115,9 @@ SELECT
     END AS approval_hours,
 
     CASE
-        WHEN purchase_timestamp IS NOT NULL
+        WHEN order_status = 'delivered'
+         AND purchase_timestamp IS NOT NULL
+         AND delivered_timestamp IS NOT NULL
          AND delivered_timestamp >= purchase_timestamp
         THEN ROUND(
             (EXTRACT(EPOCH FROM
@@ -123,8 +127,11 @@ SELECT
     END AS purchase_to_delivery_days,
 
     CASE
-        WHEN delivered_timestamp IS NOT NULL
+        WHEN order_status = 'delivered'
+         AND purchase_timestamp IS NOT NULL
+         AND delivered_timestamp IS NOT NULL
          AND estimated_delivery_timestamp IS NOT NULL
+         AND delivered_timestamp >= purchase_timestamp
         THEN ROUND(
             (EXTRACT(EPOCH FROM
                 (delivered_timestamp - estimated_delivery_timestamp)) / 86400)::NUMERIC,
@@ -135,8 +142,10 @@ SELECT
     -- Delivery performance
     CASE
         WHEN order_status = 'delivered'
+         AND purchase_timestamp IS NOT NULL
          AND delivered_timestamp IS NOT NULL
          AND estimated_delivery_timestamp IS NOT NULL
+         AND delivered_timestamp >= purchase_timestamp
         THEN delivered_timestamp > estimated_delivery_timestamp
     END AS is_late_delivery,
 
