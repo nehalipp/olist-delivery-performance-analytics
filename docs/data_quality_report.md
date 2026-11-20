@@ -13,12 +13,15 @@ The assessment covers:
 - Numeric and financial field validation
 - Payment and review record patterns
 - Geolocation duplication and coordinate anomalies
+- Dimensional warehouse validation
+- Fact-table validation and financial reconciliation
+- Analytical reporting view validation
 
 The project uses a layered PostgreSQL architecture:
 
 `staging → transform → warehouse → analytics`
 
-The original source data is preserved in the staging schema. Standardization, type conversion, derived attributes, and data-quality flags are implemented in the transform schema.
+The original source data is preserved in the staging schema. Standardization, type conversion, derived attributes, and data-quality flags are implemented in the transform schema. The warehouse contains dimensional tables and the analytics schema contains reporting views.
 
 ## 2. Source Import Validation
 
@@ -70,7 +73,7 @@ The source profiling and transformation checks established the following key cha
 
 ### Referential Integrity
 
-The following checks returned no unmatched records:
+The following source relationship checks returned no unmatched records:
 
 - Order items referencing unknown orders
 - Order items referencing unknown products
@@ -323,7 +326,7 @@ Their status distribution is:
 
 No order-item records should be invented for these orders.
 
-These orders remain part of the order-level dataset, while `fact_order_items` should contain only actual source order items.
+These orders remain part of the order-level dataset, while `fact_order_items` contains only actual source order items.
 
 ### 8.3 Shipping Limit Timestamp Anomalies
 
@@ -443,9 +446,9 @@ The review transformation produced 99,224 records.
 - Do not impose a unique constraint on `review_id`.
 - Do not deduplicate using `review_id` alone.
 - The combination (`review_id`, `order_id`) was validated as unique in the source review records.
-- Aggregate review metrics to order grain before joining them to `fact_orders`.
+- Review records are aggregated to order grain before being incorporated into `fact_orders`.
 
-Average review score and review count should be calculated using an explicit order-level aggregation rule.
+The order-level average review score is calculated from the review records associated with each order. When aggregating these order-level averages to a broader level, the result must be weighted by the number of review records per order.
 
 ## 11. Geolocation Data Quality
 
@@ -474,7 +477,7 @@ The geolocation transformation produced 1,000,163 records.
 
 The geolocation source contains substantial repetition and multiple coordinate records per ZIP prefix.
 
-These are source characteristics that must be considered when designing the location lookup.
+These are source characteristics that must be considered when designing a location lookup.
 
 ### 11.2 Geographic Coordinate Screening
 
@@ -521,7 +524,7 @@ These records should be investigated rather than automatically resolved using th
 - Do not treat ZIP prefix as a unique geographic key.
 - Flag geographically suspicious coordinates.
 - Investigate ZIP prefixes associated with multiple states.
-- Create a separate geographic lookup during warehouse modeling using a documented aggregation or representative-location rule.
+- A ZIP-level geographic lookup should use a documented aggregation or representative-location rule before being used for mapping.
 
 ## 12. Transformation Summary
 
@@ -540,22 +543,151 @@ All eight table-specific transformation scripts have been executed and validated
 
 The product category translation source contains 71 records and was incorporated during product dimension development. Two additional category mappings were added to resolve the 13 initially unmatched product records.
 
-## 13. Cross-Table Modeling Considerations
+## 13. Dimensional Warehouse Validation
 
-The following rules must be maintained during warehouse implementation:
+The dimensional warehouse contains four dimensions and two fact tables.
 
-1. `fact_orders` must contain one row per order.
-2. `fact_order_items` must contain one row per order item.
-3. Payment records must be aggregated to order grain before joining to an order-level fact.
-4. Review records must be aggregated to order grain using a documented rule.
+### 13.1 Dimension Row Counts and Business-Key Uniqueness
+
+| Dimension | Total Rows | Distinct Business Keys | Duplicate Keys |
+|---|---:|---:|---:|
+| dim_customer | 99,441 | 99,441 | 0 |
+| dim_product | 32,951 | 32,951 | 0 |
+| dim_seller | 3,095 | 3,095 | 0 |
+
+All three business dimensions passed row-count and business-key uniqueness validation.
+
+### 13.2 Date Dimension Validation
+
+| Validation | Result |
+|---|---|
+| First calendar date | 2016-09-04 |
+| Last calendar date | 2020-04-09 |
+| Total calendar records | 1,314 |
+| Missing calendar dates | 0 |
+
+The date dimension provides continuous calendar coverage across the validated date range.
+
+### 13.3 Product Dimension Validation
+
+The product dimension contains 32,951 unique product records.
+
+Category translation validation confirmed:
+
+- 32,341 products with available English translations.
+- 610 products with missing source categories.
+- 0 products with unresolved translation matches.
+
+The original source category values are preserved, and missing categories are classified as `Unknown` in English reporting.
+
+### 13.4 Fact Table Validation
+
+| Fact Table | Grain | Validated Rows | Duplicate Business Keys |
+|---|---|---:|---:|
+| fact_orders | One row per order | 99,441 | 0 |
+| fact_order_items | One row per order item | 112,650 | 0 |
+
+The order fact was validated against the source order grain. The order-item fact was validated against the composite business key (`order_id`, `order_item_id`).
+
+### 13.5 Payment and Review Aggregation
+
+Payment records and review records were aggregated separately to order grain before being loaded into `fact_orders`.
+
+This prevents multiple payment records or multiple review records from multiplying order-level measures.
+
+The fact table retains:
+
+- `payment_total_value`
+- `payment_record_count`
+- `has_payment_record`
+- `review_count`
+- `average_review_score`
+- `has_review`
+
+One delivered order has no associated payment record. It remains in the order fact with `has_payment_record = FALSE`.
+
+### 13.6 Fact Table Financial Reconciliation
+
+| Measure | Validated Total |
+|---|---:|
+| Item sales | 13,591,643.70 |
+| Freight | 2,251,909.54 |
+| Total item value | 15,843,553.24 |
+| Order payment value | 16,008,872.12 |
+
+Item sales, freight, total item value, and payment value are separate measures. Their totals are not expected to be identical.
+
+Item sales represent the sum of item prices. Total item value includes item prices and freight. Payment value represents the sum of payment records associated with orders.
+
+These measures must not be used interchangeably or described as profit.
+
+## 14. Analytics View Validation
+
+Six reporting views have been created in the `analytics` schema.
+
+| Analytics View | Grain | Validated Rows |
+|---|---|---:|
+| vw_order_performance | One row per order | 99,441 |
+| vw_sales_performance | One row per order item | 112,650 |
+| vw_customer_performance | One row per customer record | 99,441 |
+| vw_product_performance | One row per product | 32,951 |
+| vw_seller_performance | One row per seller | 3,095 |
+| vw_delivery_performance | One row per order | 99,441 |
+
+The reporting views were validated for row counts, distinct business keys, and financial reconciliation.
+
+### 14.1 Validated Operational Counts
+
+| Measure | Validated Count |
+|---|---:|
+| Total orders | 99,441 |
+| Total order items | 112,650 |
+| Delivered orders | 96,478 |
+| Late delivered orders | 7,826 |
+| Customer records | 99,441 |
+| Products | 32,951 |
+| Sellers | 3,095 |
+
+### 14.2 Financial Reconciliation
+
+| Measure | Validated Total |
+|---|---:|
+| Item sales | 13,591,643.70 |
+| Freight | 2,251,909.54 |
+| Total item value | 15,843,553.24 |
+| Order payment value | 16,008,872.12 |
+
+The analytics views reconcile to the corresponding warehouse totals.
+
+### 14.3 Aggregation and Grain Controls
+
+The analytics layer applies the following controls:
+
+- Order-level measures are sourced from `fact_orders`.
+- Item-level sales and freight measures are sourced from `fact_order_items`.
+- Customer, product, and seller views aggregate their respective measures to the relevant dimension grain.
+- Payment totals are not summed from item-level records.
+- Review-score averages across multiple orders must be weighted by review counts when the intended metric is the average across individual review records.
+- Delivery metrics must be calculated at order grain rather than by counting repeated order-level flags in an item-level dataset.
+
+## 15. Cross-Table Modeling Considerations
+
+The following rules must be maintained in the warehouse and BI semantic models:
+
+1. `fact_orders` contains one row per order.
+2. `fact_order_items` contains one row per order item.
+3. Payment records are aggregated to order grain before joining to an order-level fact.
+4. Review records are aggregated to order grain using a documented rule.
 5. Raw order-item records must not be joined directly to raw payment or review records without controlling for fan-out.
-6. Orders without order items must remain represented in the order-level fact.
-7. Orders without payment records must remain represented, with missing payment information identified.
+6. Orders without order items remain represented in the order-level fact.
+7. Orders without payment records remain represented, with missing payment information identified.
 8. Customer-level repeat-order analysis must use `customer_unique_id`.
 9. Geolocation ZIP prefixes must not be treated as unique keys.
 10. Delivery-duration calculations must use valid and complete timestamp sequences.
+11. Delivery rates and late-delivery rates must use order-level denominators.
+12. Item sales, freight, total item value, and payment value must remain separate measures.
 
-## 14. Known Limitations
+## 16. Known Limitations
 
 - The source order activity primarily spans 2016 through 2018. Four anomalous shipping-limit timestamps extend into 2020 and are documented separately.
 - Some order lifecycle timestamps are missing or have inconsistent chronological sequences.
@@ -567,68 +699,25 @@ The following rules must be maintained during warehouse implementation:
 - Item sales value and payment value are different measures and should not be treated as interchangeable.
 - Review-score and delivery-performance comparisons are descriptive and do not establish causation.
 - The source data does not contain all information required to calculate complete marketplace profitability.
+- The project analyzes historical public data and should not be interpreted as a representation of current marketplace performance.
 
-## 15. Assessment Status
+## 17. Overall Assessment Status
 
-**Source import, transformation validation, and initial dimension validation are complete.**
+**Source profiling, transformation, dimensional modeling, fact-table loading, and analytics view validation are complete.**
 
-The staging and transformation layers have been created and validated against the source data.
+The project has implemented and validated the following layers:
 
-The initial dimensional warehouse contains validated customer, product, seller, and date dimensions.
-
-Known data-quality exceptions have been retained, flagged, or documented rather than silently removed.
-
-The following warehouse activities remain pending:
-
-- `fact_orders` implementation and validation.
-- `fact_order_items` implementation and validation.
-- Payment and review aggregation validation.
-- Warehouse referential integrity and financial reconciliation.
-- Analytical reporting view development.
-
-The next phase is fact-table implementation, beginning with `fact_orders`.
-
-This document will be extended with fact-table, warehouse-level, and analytics-level validation results after those layers are implemented.
-
-## 16. Warehouse Dimension Validation
-
-The initial dimensional warehouse tables have been created and validated.
-
-### 16.1 Dimension Row Counts and Business-Key Uniqueness
-
-| Dimension | Total Rows | Distinct Business Keys | Duplicate Keys |
-|---|---:|---:|---:|
-| dim_customer | 99,441 | 99,441 | 0 |
-| dim_product | 32,951 | 32,951 | 0 |
-| dim_seller | 3,095 | 3,095 | 0 |
-
-All three dimensions passed row-count and business-key uniqueness validation.
-
-### 16.2 Date Dimension Validation
-
-| Validation | Result |
+| Layer | Status |
 |---|---|
-| First calendar date | 2016-09-04 |
-| Last calendar date | 2020-04-09 |
-| Total calendar records | 1,314 |
-| Missing calendar dates | 0 |
+| PostgreSQL staging | Implemented and validated |
+| SQL transformations | Implemented and validated |
+| Dimension tables | Implemented and validated |
+| Fact tables | Implemented and validated |
+| Analytics reporting views | Implemented and validated |
+| Data quality documentation | Completed |
+| Power BI dashboards | Next project phase |
+| Tableau dashboards | Next project phase |
 
-The date dimension provides continuous calendar coverage across the validated date range.
+The warehouse contains four dimensions, two fact tables, and six analytical reporting views.
 
-### 16.3 Product Dimension Validation
-
-The product dimension contains 32,951 unique product records.
-
-Category translation validation confirmed:
-
-- 32,341 products with available English translations.
-- 610 products with missing source categories.
-- 0 products with unresolved translation matches.
-
-The original source category values are preserved, and missing categories are classified as `Unknown` for English reporting.
-
-### 16.4 Warehouse Validation Status
-
-The initial customer, product, seller, and date dimensions have passed their current validation checks.
-
-Fact-table implementation and subsequent warehouse reconciliation remain pending.
+The SQL foundation is ready for BI development. The next phase is to build the Power BI semantic model, define and validate DAX measures, and develop the reporting dashboards.

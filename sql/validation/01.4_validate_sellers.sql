@@ -30,7 +30,6 @@
 -- Grain: One row per seller_id
 -- Expected rows: 3,095
 -- ============================================================
-
 -- 4.1 Row count and seller ID uniqueness
 SELECT
     COUNT(*) AS total_rows,
@@ -39,25 +38,42 @@ SELECT
 FROM transform.sellers_clean;
 
 
--- 4.2 Missing and nonstandard seller attributes
+-- 4.2 Missing seller attributes
+-- These flags are created in transform.sellers_clean.
 SELECT
-    COUNT(*) FILTER (WHERE is_missing_seller_id) AS missing_seller_id,
-    COUNT(*) FILTER (WHERE is_missing_zip_code) AS missing_zip_code,
-    COUNT(*) FILTER (WHERE is_missing_city) AS missing_city,
-    COUNT(*) FILTER (WHERE is_missing_state) AS missing_state,
-    COUNT(*) FILTER (WHERE has_nonstandard_city) AS nonstandard_city,
-    COUNT(*) FILTER (WHERE has_nonstandard_state) AS nonstandard_state
+    COUNT(*) FILTER (
+        WHERE is_missing_seller_id
+    ) AS missing_seller_id,
+
+    COUNT(*) FILTER (
+        WHERE is_missing_zip_code
+    ) AS missing_zip_code,
+
+    COUNT(*) FILTER (
+        WHERE is_missing_city
+    ) AS missing_city,
+
+    COUNT(*) FILTER (
+        WHERE is_missing_state
+    ) AS missing_state
+
 FROM transform.sellers_clean;
 
 
 -- 4.3 Seller ZIP code length validation
+-- ZIP prefixes are expected to contain five characters.
 SELECT
     seller_zip_code_prefix,
     LENGTH(seller_zip_code_prefix) AS zip_code_length,
     COUNT(*) AS record_count
+
 FROM transform.sellers_clean
-WHERE LENGTH(seller_zip_code_prefix) <> 5
+
+WHERE seller_zip_code_prefix IS NOT NULL
+  AND LENGTH(seller_zip_code_prefix) <> 5
+
 GROUP BY seller_zip_code_prefix
+
 ORDER BY record_count DESC;
 
 
@@ -65,8 +81,11 @@ ORDER BY record_count DESC;
 SELECT
     seller_state,
     COUNT(*) AS seller_count
+
 FROM transform.sellers_clean
+
 GROUP BY seller_state
+
 ORDER BY seller_count DESC;
 
 
@@ -75,6 +94,39 @@ SELECT
     seller_state,
     seller_city,
     COUNT(*) AS seller_count
+
 FROM transform.sellers_clean
-GROUP BY seller_state, seller_city
+
+GROUP BY
+    seller_state,
+    seller_city
+
 ORDER BY seller_count DESC;
+
+
+-- 4.6 Check for duplicate seller IDs
+-- Expected result: no records.
+SELECT
+    seller_id,
+    COUNT(*) AS record_count
+
+FROM transform.sellers_clean
+
+GROUP BY seller_id
+
+HAVING COUNT(*) > 1
+
+ORDER BY record_count DESC;
+
+
+-- 4.7 Compare source and transformed seller row counts
+SELECT
+    (SELECT COUNT(*) FROM staging.sellers_raw)
+        AS source_rows,
+
+    (SELECT COUNT(*) FROM transform.sellers_clean)
+        AS transformed_rows,
+
+    (SELECT COUNT(*) FROM staging.sellers_raw)
+      - (SELECT COUNT(*) FROM transform.sellers_clean)
+        AS row_count_difference;

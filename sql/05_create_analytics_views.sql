@@ -3,10 +3,27 @@
 -- Project: Olist E-Commerce Delivery Performance & Analytics
 -- Script: 05_create_analytics_views.sql
 -- Purpose: Create reusable business reporting views.
+--
 -- Run after:
---   01.1 to 01.8_transform_data.sql
---   02_validate_dimensions.sql
---   03_validate_facts.sql
+--   1. SQL transformation scripts
+--   2. Dimension creation and validation
+--   3. Fact-table creation and validation
+--
+-- Schema:
+--   analytics
+--
+-- Views:
+--   1. vw_order_performance
+--   2. vw_sales_performance
+--   3. vw_customer_performance
+--   4. vw_product_performance
+--   5. vw_seller_performance
+--   6. vw_delivery_performance
+--
+-- Important:
+--   Each view has a defined grain.
+--   Order-level and item-level measures must not be
+--   aggregated together without controlling for fan-out.
 -- ============================================================
 
 
@@ -16,8 +33,10 @@ CREATE SCHEMA IF NOT EXISTS analytics;
 -- ============================================================
 -- 1. ORDER PERFORMANCE
 -- Grain: One row per order
--- Purpose: Order status, customer, payment, review,
---          and purchase date analysis.
+--
+-- Purpose:
+--   Order status, customer, payment, review,
+--   and purchase date analysis.
 -- ============================================================
 
 CREATE OR REPLACE VIEW analytics.vw_order_performance AS
@@ -96,12 +115,17 @@ LEFT JOIN warehouse.dim_date de
 -- ============================================================
 -- 2. SALES PERFORMANCE
 -- Grain: One row per order item
--- Purpose: Item sales, freight, product, seller,
---          customer, and order analysis.
+--
+-- Purpose:
+--   Item sales, freight, product, seller,
+--   customer, and order analysis.
 --
 -- Important:
--- Item sales and order payment totals are different
--- measures. Do not sum order payment totals at item grain.
+--   Item sales and order payment totals are different
+--   measures. Do not sum order payment totals at item grain.
+--
+--   Delivery flags are included for filtering and context.
+--   Delivery KPIs must be calculated at order grain.
 -- ============================================================
 
 CREATE OR REPLACE VIEW analytics.vw_sales_performance AS
@@ -166,11 +190,20 @@ LEFT JOIN warehouse.dim_date d
 -- ============================================================
 -- 3. CUSTOMER PERFORMANCE
 -- Grain: One row per customer_key
--- Purpose: Customer order activity, payment value,
---          item sales, freight, and review analysis.
 --
--- Order-level and item-level measures are aggregated
--- separately before joining to prevent fanout.
+-- Purpose:
+--   Customer order activity, payment value,
+--   item sales, freight, and review analysis.
+--
+-- Aggregation controls:
+--   Order-level and item-level measures are aggregated
+--   separately before joining to prevent fan-out.
+--
+-- Review score:
+--   The customer-level average review score is weighted
+--   by the number of review records associated with each
+--   order. This produces an average across review records,
+--   rather than an unweighted average of order averages.
 -- ============================================================
 
 CREATE OR REPLACE VIEW analytics.vw_customer_performance AS
@@ -196,7 +229,10 @@ WITH order_metrics AS (
 
         SUM(review_count) AS total_reviews,
 
-        AVG(average_review_score) AS average_review_score
+        SUM(
+            average_review_score * review_count
+        ) / NULLIF(SUM(review_count), 0)
+            AS average_review_score
 
     FROM warehouse.fact_orders
 
@@ -265,7 +301,9 @@ LEFT JOIN item_metrics im
 -- ============================================================
 -- 4. PRODUCT PERFORMANCE
 -- Grain: One row per product_key
--- Purpose: Product and category sales performance.
+--
+-- Purpose:
+--   Product and category sales performance.
 -- ============================================================
 
 CREATE OR REPLACE VIEW analytics.vw_product_performance AS
@@ -329,8 +367,10 @@ GROUP BY
 -- ============================================================
 -- 5. SELLER PERFORMANCE
 -- Grain: One row per seller_key
--- Purpose: Seller sales, order volume, freight,
---          and delivery performance.
+--
+-- Purpose:
+--   Seller sales, order volume, freight,
+--   and delivery performance.
 -- ============================================================
 
 CREATE OR REPLACE VIEW analytics.vw_seller_performance AS
@@ -383,8 +423,15 @@ GROUP BY
 -- ============================================================
 -- 6. DELIVERY PERFORMANCE
 -- Grain: One row per order
--- Purpose: Delivery time, delay, on-time performance,
---          and timestamp quality analysis.
+--
+-- Purpose:
+--   Delivery time, delay, on-time performance,
+--   and timestamp quality analysis.
+--
+-- Important:
+--   Use this order-level view for delivery KPIs.
+--   Do not calculate delivery rates by counting repeated
+--   order-level flags in vw_sales_performance.
 -- ============================================================
 
 CREATE OR REPLACE VIEW analytics.vw_delivery_performance AS
